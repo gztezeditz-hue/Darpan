@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mercatus Globalis — Shop</title>
+<style>
+  :root{
+    --orange:#ff7a00;
+    --orange-dark:#e56d00;
+    --bg:#ffffff;
+    --muted:#6b7280;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,Arial;background:var(--bg);color:#111}
+  header{background:var(--orange);color:#fff;padding:14px 16px;font-weight:700;text-align:center;position:sticky;top:0;z-index:60;box-shadow:0 2px 8px rgba(0,0,0,0.06)}
+  /* categories */
+  .cats{display:flex;gap:10px;overflow-x:auto;padding:12px;background:#fff4e6;border-bottom:3px solid var(--orange)}
+  .cat{flex:0 0 auto;padding:8px 14px;background:var(--orange);color:#fff;border-radius:999px;font-weight:700;cursor:pointer;white-space:nowrap}
+  .cat.active{box-shadow:0 10px 30px rgba(0,0,0,0.08);transform:translateY(-3px)}
+  /* grid */
+  .grid{padding:12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+  .card{background:#fff;border-radius:12px;padding:12px;box-shadow:0 8px 24px rgba(3,18,40,0.04);display:flex;flex-direction:column;min-height:260px}
+  .card img{width:100%;height:150px;object-fit:cover;border-radius:8px}
+  .title{font-weight:700;margin:8px 0 4px 0;font-size:15px}
+  .price{color:var(--orange);font-weight:800}
+  .sizesmall{font-size:12px;color:var(--muted);margin-top:6px}
+  .actions{margin-top:auto;display:flex;gap:8px}
+  .btn{flex:1;padding:10px;border-radius:8px;border:0;font-weight:800;cursor:pointer}
+  .btn.order{background:linear-gradient(90deg,var(--orange-dark),var(--orange));color:#fff}
+  .btn.wa{background:#fff;border:1px solid #eee}
+  /* modal */
+  .modal-bg{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);padding:12px;z-index:120}
+  .modal{width:100%;max-width:420px;background:#fff;border-radius:12px;padding:18px;box-shadow:0 30px 80px rgba(2,6,23,0.35);overflow:auto;max-height:94vh}
+  .modal h3{margin:0 0 10px 0}
+  .field{margin:8px 0}
+  .field input,.field select{width:100%;padding:10px;border-radius:8px;border:1px solid #e6e9ee;font-size:15px}
+  .modal .row{display:flex;gap:8px}
+  .fullwidth{width:100%}
+  .closeBtn{background:#374151;color:#fff;border:0;padding:10px;border-radius:8px;width:100%;margin-top:10px}
+  /* responsive */
+  @media (max-width:480px){
+    .card img{height:160px}
+    .grid{grid-template-columns:repeat(2,1fr);padding:10px;gap:10px}
+  }
+</style>
+</head>
+<body>
+
+<header>Mercatus Globalis</header>
+
+<div id="cats" class="cats" aria-hidden="false"></div>
+
+<main>
+  <div id="grid" class="grid">Loading products…</div>
+</main>
+
+<!-- modal -->
+<div id="modalBg" class="modal-bg" role="dialog" aria-modal="true">
+  <div class="modal" id="modal">
+    <h3 id="modalTitle">Order</h3>
+
+    <div class="field">
+      <label style="font-weight:700">Product</label>
+      <div id="modalProduct" style="padding:8px;background:#fbfbfb;border-radius:8px;border:1px solid #f0f0f0"></div>
+    </div>
+
+    <div class="field">
+      <label style="font-weight:700">Size</label>
+      <select id="orderSize" class="fullwidth"></select>
+    </div>
+
+    <div class="field"><input id="orderName" placeholder="Full name" /></div>
+    <div class="field"><input id="orderPhone" placeholder="Phone number" inputmode="tel" /></div>
+
+    <div class="field"><input id="orderState" placeholder="State" /></div>
+    <div class="field"><input id="orderCity" placeholder="City" /></div>
+    <div class="field"><input id="orderVillage" placeholder="Village" /></div>
+    <div class="field"><input id="orderPin" placeholder="Pincode" inputmode="numeric" /></div>
+
+    <div class="field">
+      <label style="font-weight:700">Payment method</label>
+      <select id="orderPayment">
+        <option>Online Payment</option>
+        <option>Cash on Delivery</option>
+      </select>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <button class="btn order" onclick="sendOrder()">Send on WhatsApp</button>
+      <button class="closeBtn" onclick="closeModal()">Back</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* --------------- CONFIG --------------- */
+const SHEET_ID = "1mdwssLvXos6BG-ajTUlIbwzguTHjD7LP3jRiDITMbIY";
+const SHEET_GID = "0";
+const SHEET_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:json&gid=${SHEET_GID}`;
+const WH_NUMBER = "919332307996"; // international format (no +)
+
+let products = []; // will hold parsed product objects
+let filteredProducts = [];
+let activeIndex = -1;
+
+/* ---------- helpers ---------- */
+function placeholderImage(){ return "https://i.ibb.co/7r7YJbF/no-image.jpg"; }
+
+function fixImage(url){
+  if(!url) return placeholderImage();
+  url = String(url).trim();
+  if(!url) return placeholderImage();
+  // drive links -> direct
+  if(url.includes("drive.google.com")){
+    const m = url.match(/[-\w]{25,}/);
+    if(m) return `https://drive.google.com/uc?export=view&id=${m[0]}`;
+  }
+  // if starts with //, add https:
+  if(url.startsWith("//")) url = "https:" + url;
+  // encode spaces
+  url = url.replace(/\s/g, "%20");
+  return url;
+}
+
+function normalizeCat(s){
+  if(!s) return "other accessories";
+  return String(s).trim().toLowerCase().replace(/\s+/g," ");
+}
+
+/* ---------- load sheet ---------- */
+async function loadSheet(){
+  try{
+    const res = await fetch(SHEET_URL);
+    const text = await res.text();
+    const json = JSON.parse(text.substring(47, text.length - 2));
+    const rows = json.table.rows || [];
+
+    // Map columns according to your sheet:
+    // 0: Product name
+    // 1: Price
+    // 2: Material
+    // 3: Description
+    // 4: Category
+    // 5: Size
+    // 6: Image (URL)
+    products = rows.map((r, idx) => {
+      const c = r.c || [];
+      return {
+        idx,
+        name: c[0] && c[0].v ? c[0].v : "Untitled",
+        price: c[1] && c[1].v ? c[1].v : "0",
+        material: c[2] && c[2].v ? c[2].v : "",
+        desc: c[3] && c[3].v ? c[3].v : "",
+        categoryRaw: c[4] && c[4].v ? c[4].v : "Other Accessories",
+        category: normalizeCat(c[4] && c[4].v ? c[4].v : "Other Accessories"),
+        sizeRaw: c[5] && c[5].v ? c[5].v : "",
+        sizes: parseSizes(c[5] && c[5].v ? c[5].v : ""),
+        imageRaw: c[6] && c[6].v ? c[6].v : "",
+        image: fixImage(c[6] && c[6].v ? c[6].v : "")
+      };
+    });
+
+    filteredProducts = products.slice();
+    renderCategories();
+    renderGrid(filteredProducts);
+  }catch(err){
+    console.error("Sheet load failed:", err);
+    document.getElementById("grid").innerHTML = "<div style='padding:20px;color:#a00'>Failed to load products. Make sure sheet is public.</div>";
+  }
+}
+
+/* ---------- parse sizes ---------- */
+function parseSizes(raw){
+  if(!raw) return ["Free Size"];
+  const s = String(raw).trim();
+  if(!s) return ["Free Size"];
+  // separators: comma, slash, pipe, semicolon, whitespace
+  let parts = s.split(/[,|\/;]+/).map(x=>x.trim()).filter(Boolean);
+  if(parts.length === 0) parts = [s];
+  return parts;
+}
+
+/* ---------- categories UI ---------- */
+function renderCategories(){
+  const catsWrap = document.getElementById("cats");
+  // build unique categories in requested order
+  const preferred = ["top","t-shirts","pants","jeans","hoodies","jackets","shoes","gadgets","other accessories"];
+  const found = Array.from(new Set(products.map(p=>p.category)));
+  const final = [];
+  preferred.forEach(k => { if(found.includes(k)) final.push(k); });
+  found.forEach(k => { if(!final.includes(k)) final.push(k); });
+  // render with friendly label (capitalize)
+  catsWrap.innerHTML = final.map(cat => {
+    const label = cat.split(" ").map(w=>w[0]?.toUpperCase()+w.slice(1)).join(" ");
+    return `<div class="cat" data-cat="${cat}" onclick="onCatClick('${cat}', this)">${label}</div>`;
+  }).join("");
+  // make 'All' first
+  catsWrap.insertAdjacentHTML('afterbegin', `<div class="cat active" data-cat="all" onclick="onCatClick('all', this)">All</div>`);
+}
+
+/* ---------- category click ---------- */
+function onCatClick(cat, el){
+  // toggle active
+  document.querySelectorAll('.cat').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  if(cat === 'all') filteredProducts = products.slice();
+  else filteredProducts = products.filter(p => p.category === cat);
+  renderGrid(filteredProducts);
+}
+
+/* ---------- render grid ---------- */
+function renderGrid(list){
+  const grid = document.getElementById("grid");
+  grid.innerHTML = "";
+  if(!list || list.length === 0){
+    grid.innerHTML = `<div style="grid-column:1/-1;padding:18px;border-radius:10px;background:#fff;color:#333">No products found</div>`;
+    return;
+  }
+  list.forEach((p, i) => {
+    const html = `
+      <div class="card" role="article">
+        <img src="${p.image}" alt="${escapeHtml(p.name)}" onerror="this.src='${placeholderImage()}'">
+        <div style="padding-top:8px">
+          <div class="title">${escapeHtml(p.name)}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div class="price">₹${escapeHtml(p.price)}</div>
+            <div style="font-size:12px;color:var(--muted)">${escapeHtml(p.material || '')}</div>
+          </div>
+          <div class="sizesmall">Sizes: ${escapeHtml(p.sizeRaw || '—')}</div>
+        </div>
+        <div class="actions" style="margin-top:10px">
+          <button class="btn order" onclick="openModalByIndex(${p.idx})">Order</button>
+          <button class="btn wa" onclick="quickWhats(${p.idx})">WhatsApp</button>
+        </div>
+      </div>`;
+    grid.insertAdjacentHTML('beforeend', html);
+  });
+}
+
+/* ---------- open modal by product index (safe) ---------- */
+function openModalByIndex(idx){
+  const p = products.find(x => x.idx === idx);
+  if(!p) return;
+  activeIndex = idx;
+  document.getElementById("modalTitle").innerText = "Order — " + p.name;
+  document.getElementById("modalProduct").innerText = `${p.name} — ₹${p.price}`;
+
+  // populate sizes
+  const sel = document.getElementById("orderSize");
+  sel.innerHTML = "";
+  p.sizes.forEach(s => {
+    sel.insertAdjacentHTML('beforeend', `<option value="${escapeAttr(s)}">${escapeHtml(s)}</option>`);
+  });
+
+  // clear form
+  ["orderName","orderPhone","orderState","orderCity","orderVillage","orderPin"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("orderPayment").value = "Online Payment";
+
+  // show modal
+  document.getElementById("modalBg").style.display = "flex";
+  // ensure modal is scrolled to top
+  document.getElementById("modal").scrollTop = 0;
+}
+
+/* ---------- close modal ---------- */
+function closeModal(){
+  document.getElementById("modalBg").style.display = "none";
+}
+
+/* ---------- quick whatsapp (no form) ---------- */
+function quickWhats(idx){
+  const p = products.find(x => x.idx === idx);
+  if(!p) return;
+  const lines = [
+    "🚨‼️ Alert Mercatus Globalis new Order requests",
+    "Order Request:",
+    `Product: ${p.name}`,
+    `Price: ${p.price}`,
+    `Size: —`,
+    `Name: —`,
+    `Phone: —`,
+    `State: —`,
+    `City: —`,
+    `Village: —`,
+    `Pincode: —`,
+    `Payment Method: —`
+  ];
+  window.open(`https://wa.me/${WH_NUMBER}?text=${encodeURIComponent(lines.join("\n"))}`, '_blank');
+}
+
+/* ---------- send_order (from modal) ---------- */
+function sendOrder(){
+  const p = products.find(x => x.idx === activeIndex);
+  if(!p) return alert("Product not found");
+
+  const data = {
+    product: p.name,
+    price: p.price,
+    size: document.getElementById("orderSize").value || "—",
+    name: document.getElementById("orderName").value.trim() || "—",
+    phone: document.getElementById("orderPhone").value.trim() || "—",
+    state: document.getElementById("orderState").value.trim() || "—",
+    city: document.getElementById("orderCity").value.trim() || "—",
+    village: document.getElementById("orderVillage").value.trim() || "—",
+    pin: document.getElementById("orderPin").value.trim() || "—",
+    payment: document.getElementById("orderPayment").value || "—"
+  };
+
+  const lines = [
+    "🚨‼️ Alert Mercatus Globalis new Order requests",
+    "Order Request:",
+    `Product: ${data.product}`,
+    `Price: ${data.price}`,
+    `Size: ${data.size}`,
+    `Name: ${data.name}`,
+    `Phone: ${data.phone}`,
+    `State: ${data.state}`,
+    `City: ${data.city}`,
+    `Village: ${data.village}`,
+    `Pincode: ${data.pin}`,
+    `Payment Method: ${data.payment}`
+  ];
+
+  window.open(`https://wa.me/${WH_NUMBER}?text=${encodeURIComponent(lines.join("\n"))}`, '_blank');
+}
+
+/* ---------- tiny helpers ---------- */
+function escapeHtml(s){ if(s===null||s===undefined) return ""; return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function escapeAttr(s){ if(s===null||s===undefined) return ""; return String(s).replace(/"/g,'&quot;').replace(/'/g,"&#39;"); }
+
+/* ---------- start ---------- */
+loadSheet();
+</script>
+</body>
+</html>
